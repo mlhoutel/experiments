@@ -9,7 +9,8 @@ export default defineConfig({
 			$routes: path.resolve('src/routes'),
 			$components: path.resolve('src/library/components'),
 			$styles: path.resolve('src/library/styles'),
-			$utils: path.resolve('src/library/utils')
+			$utils: path.resolve('src/library/utils'),
+			$assets: path.resolve('src/library/assets')
 		}
 	}
 });
