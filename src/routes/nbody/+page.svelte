@@ -4,7 +4,7 @@
 	import { Random, Vec2, ColorGradient, ColorToHex } from '$utils/math.js';
 	import imageCircle from '$assets/circle.png';
 
-	let system = undefined;
+	let system = new System();
 	let circles = [];
 	let debug = undefined;
 	let mouse = undefined;
@@ -18,9 +18,20 @@
 		shading: true,
 		t_sys: 0,
 		t_draw: 0,
-		nb_objects: 3000,
-		fading: 0xf9f9f9
+		nb_objects: 100,
+		fading_color: 0xf9f9f9,
+		fading: true,
+		dt: system.dt,
+		method: system.method,
+		g_constant: system.g_constant,
+		light_speed: system.light_speed,
+		quad_capacity: system.quad_capacity,
+		quad_maxdepth: system.quad_maxdepth,
+		quad_theta: system.quad_theta,
+		iterations: system.iterations
 	};
+
+	let updates = [];
 
 	const galaxy_gradient = ColorGradient(
 		[
@@ -32,16 +43,35 @@
 	);
 
 	const galaxy_system = () => {
-		const system = new System();
+		system.bodies = [];
+		settings.renderer_options = {
+			preserveDrawingBuffer: true,
+			clearBeforeRender: false
+		};
+		settings.shading = true;
+		settings.nb_objects = 2500;
+		settings.fading_color = 0xf9f9f9;
+		settings.fading = true;
+		settings.dt = 0.6;
+		settings.method = 'cluster';
+		settings.g_constant = 5.2 * 10e-1;
+		settings.light_speed = 2.6 * 10e1;
+		settings.quad_capacity = 5;
+		settings.quad_maxdepth = 20;
+		settings.quad_theta = 1.5;
+		settings.iterations = 3;
+
 		for (let i = 0; i < settings.nb_objects; i++) {
-			const angle = Random(-Math.PI, Math.PI);
-			const dist = Random(0, 0.5);
+			const angle = Random(-Math.PI, Math.PI - 0.01);
+			const dist = Random(0.001, 0.5); //Math.sqrt(Random(0, 0.5));
 			const pos = new Vec2(dist * system.bounds.b.y, 0).rotateAround(angle, new Vec2(0, 0));
-			const vel = new Vec2(7 + 0.01 / (0.001 + dist * dist), 0)
+			const vel = new Vec2(5 + 0.01 / (0.01 + dist ** 5), 0)
 				.rotateAround(angle, new Vec2(0, 0))
 				.norm();
-			system.add(new Body(pos, vel, Math.exp(Random(1, 4))));
+			const mass = Math.exp(Random(1, 4));
+			system.add(new Body(pos, vel, mass));
 		}
+
 		return system;
 	};
 
@@ -49,38 +79,182 @@
 		galaxy: galaxy_system
 	};
 
-	const setup = (app, pane) => {
+	const setup_app = (app, pane) => {
+		circles.forEach((c) => c.destroy());
+		circles = [];
+
+		app.stage.removeChildren();
+		app.renderer.clear();
+
 		system = scenarios[settings.scenario]();
 
-		document.addEventListener('mousemove', (e) => {
-			mouse = new Vec2(e.x, e.y);
-		});
+		pane.refresh();
 
+		const circles_container = new PIXI.Container();
+		const texture = PIXI.Texture.from(imageCircle);
+		for (let i = 0; i < system.bodies.length; ++i) {
+			const sprite = new PIXI.Sprite(texture);
+			sprite.scale.set(0);
+			circles_container.addChild(sprite);
+			circles.push(sprite);
+		}
+
+		app.stage.addChild(circles_container);
+		const fade = new PIXI.Graphics();
+		fade.blendMode = PIXI.BLEND_MODES.MULTIPLY;
+		fade.beginFill(settings.fading_color);
+		fade.drawRect(0, 0, window.innerWidth, window.innerHeight);
+		fade.endFill();
+		circles_container.addChild(fade);
+
+		const debug_container = new PIXI.Container();
+		debug = new PIXI.Graphics();
+		debug_container.addChild(debug);
+		app.stage.addChild(debug_container);
+	};
+
+	const setup_pane = (app, pane) => {
 		pane.title = 'Barnes-hut simulation';
 
 		pane.addInput(settings, 'scenario', {
 			options: {
 				galaxy: 'galaxy'
-			}
+			},
+			label: 'scenario'
 		});
 
-		pane.addInput(settings, 'nb_objects', {
-			step: 10,
-			min: 0,
-			max: 10000,
-			format: (n) => Math.floor(n)
+		let folder_quadtree;
+		pane
+			.addInput(settings, 'method', {
+				options: {
+					cluster: 'cluster',
+					bruteforce: 'bruteforce',
+					aggregate: 'aggregate'
+				},
+				label: 'method'
+			})
+			.on('change', (e) => {
+				updates.push(() => (system.method = e.value));
+				folder_quadtree.disabled = e.value != 'cluster';
+			});
+
+		pane
+			.addInput(settings, 'nb_objects', {
+				step: 10,
+				min: 0,
+				max: 10000,
+				format: (n) => Math.floor(n),
+				label: 'count'
+			})
+			.on('change', () => {
+				updates.push(() => setup_app(app, pane));
+			});
+
+		pane
+			.addInput(settings, 'dt', {
+				min: 0.01,
+				max: 1,
+				label: 'step'
+			})
+			.on('change', (e) => {
+				updates.push(() => (system.dt = e.value));
+			});
+
+		pane
+			.addInput(settings, 'iterations', {
+				min: 1,
+				max: 100,
+				format: (v) => Math.floor(v),
+				label: 'iteration'
+			})
+			.on('change', (e) => {
+				updates.push(() => (system.iterations = e.value));
+			});
+
+		pane
+			.addInput(settings, 'g_constant', {
+				step: 0.1,
+				min: 0.1,
+				max: 100,
+				label: 'G'
+			})
+			.on('change', (e) => {
+				updates.push(() => (system.g_constant = e.value));
+			});
+
+		pane
+			.addInput(settings, 'light_speed', {
+				step: 0.1,
+				min: 0.1,
+				max: 10e3,
+				label: 'light'
+			})
+			.on('change', (e) => {
+				updates.push(() => (system.light_speed = e.value));
+			});
+
+		pane.addButton({ title: 'Reset' }).on('click', () => {
+			updates.push(() => setup_app(app, pane));
 		});
 
-		pane.addInput(settings, 'fading', {
+		folder_quadtree = pane.addFolder({ title: 'Quadtree', expanded: false });
+
+		folder_quadtree
+			.addInput(settings, 'quad_capacity', {
+				step: 1,
+				min: 1,
+				max: 100,
+				format: (v) => Math.floor(v),
+				label: 'capacity'
+			})
+			.on('change', (e) => {
+				updates.push(() => (system.quad_capacity = e.value));
+			});
+
+		folder_quadtree
+			.addInput(settings, 'quad_maxdepth', {
+				step: 1,
+				min: 1,
+				max: 20,
+				format: (v) => Math.floor(v),
+				label: 'max depth'
+			})
+			.on('change', (e) => {
+				updates.push(() => (system.quad_maxdepth = e.value));
+			});
+
+		folder_quadtree
+			.addInput(settings, 'quad_theta', {
+				step: 0.1,
+				min: 0.0,
+				max: 2.0,
+				label: 'theta'
+			})
+			.on('change', (e) => {
+				updates.push(() => (system.quad_theta = e.value));
+			});
+
+		folder_quadtree.addInput(settings, 'debug', {
+			label: 'debug'
+		});
+
+		const graphics_folder = pane.addFolder({ title: 'Graphics', expanded: false });
+
+		graphics_folder.addInput(settings, 'shading', {
+			label: 'shading'
+		});
+		graphics_folder.addInput(settings, 'fading', {
+			label: 'fading'
+		});
+		graphics_folder.addInput(settings, 'fading_color', {
 			picker: 'inline',
-			view: 'color'
+			view: 'color',
+			label: 'color'
 		});
-
-		pane.addInput(settings, 'shading');
-		pane.addInput(settings, 'debug');
 
 		const metrics = pane.addFolder({
-			title: 'Metrics'
+			title: 'Metrics',
+			expanded: false
 		});
 
 		metrics.addMonitor(settings, 't_sys', {
@@ -96,26 +270,15 @@
 			min: 0,
 			max: 100
 		});
+	};
 
-		const texture = PIXI.Texture.from(imageCircle);
-		for (let i = 0; i < system.bodies.length; ++i) {
-			const sprite = new PIXI.Sprite(texture);
-			sprite.scale.set(0);
-			app.stage.addChild(sprite);
-			circles.push(sprite);
-		}
+	const setup = (app, pane) => {
+		setup_pane(app, pane);
+		setup_app(app, pane);
 
-		debug = new PIXI.Graphics();
-		app.stage.addChild(debug);
-
-		const fade = new PIXI.Graphics();
-		app.stage.addChild(fade);
-
-		// Blend Mode
-		fade.blendMode = PIXI.BLEND_MODES.MULTIPLY;
-		fade.beginFill(settings.fading);
-		fade.drawRect(0, 0, window.innerWidth, window.innerHeight);
-		fade.endFill();
+		document.addEventListener('mousemove', (e) => {
+			mouse = new Vec2(e.x, e.y);
+		});
 	};
 
 	const compute_resolution = () => {
@@ -130,7 +293,7 @@
 		return new Vec2(origin.x, origin.y * Math.min(window.innerHeight / window.innerWidth, 1));
 	};
 
-	const draw_debug = () => {
+	const draw_debug_quadtree = () => {
 		const resolution = compute_resolution();
 		const origin = compute_origin();
 
@@ -169,6 +332,12 @@
 		}
 	};
 
+	const draw_debug = () => {
+		if (settings.method == 'cluster') {
+			draw_debug_quadtree();
+		}
+	};
+
 	const draw_system = () => {
 		const resolution = compute_resolution();
 		const origin = compute_origin();
@@ -179,7 +348,9 @@
 			circles[i].scale.set(Math.log2(system.bodies[i].mass) * 0.01 * resolution);
 
 			if (settings.shading) {
-				const pow = Math.floor(system.bodies[i].vel.length_2() + system.bodies[i].mass * 0.3) - 50;
+				const pow = Math.floor(
+					system.bodies[i].vel.length_2() * system.dt + system.bodies[i].mass * 0.5 - 60
+				);
 				const col = ColorToHex(galaxy_gradient[Math.max(Math.min(pow, 99), 0)]);
 				circles[i].tint = col;
 			} else {
@@ -192,10 +363,16 @@
 
 	const draw = (app, pane) => {
 		const s_sys = performance.now();
-		system.step();
+		system.step(settings.dt);
 		settings.t_sys = performance.now() - s_sys;
 
 		const s_draw = performance.now();
+
+		if (!settings.fading) {
+			app.renderer.clear();
+			app.renderer.backgroundColor = 0x000000;
+		}
+
 		draw_system();
 
 		debug.clear();
@@ -206,4 +383,4 @@
 	};
 </script>
 
-<Canvas {setup} {draw} bind:settings />
+<Canvas {setup} {draw} bind:updates bind:settings />

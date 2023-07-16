@@ -174,7 +174,7 @@ class Rect2 {
 }
 
 class Quadtree2 {
-	constructor(bounds, capacity, max_depth = 5) {
+	constructor(bounds = new Rect2(new Vec2(0, 0), new Vec2(0, 0)), capacity = 10, max_depth = 5) {
 		this.bounds = bounds;
 		this.capacity = capacity;
 		this.childs = undefined;

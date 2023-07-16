@@ -4,6 +4,7 @@
 	export let setup = (app, pane) => {};
 	export let draw = (app, pane) => {};
 	export let settings = {};
+	export let updates = [];
 
 	let app = undefined;
 	let pane = undefined;
@@ -47,6 +48,9 @@
 
 			settings.time = performance.now() - settings.start;
 			settings.fps = app.ticker.FPS;
+
+			updates.map((f) => f()); // apply changes after calculations
+			updates = []; // clear update stack
 		});
 	};
 
