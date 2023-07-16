@@ -6,6 +6,7 @@
 
 	let system = new System();
 	let circles = [];
+	let radius = [];
 	let debug = undefined;
 	let mouse = undefined;
 	let settings = {
@@ -18,17 +19,18 @@
 		shading: true,
 		t_sys: 0,
 		t_draw: 0,
-		nb_objects: 100,
+		nb_objects: 1,
 		fading_color: 0xf9f9f9,
 		fading: true,
 		dt: system.dt,
-		method: system.method,
+		bruteforce: true,
 		g_constant: system.g_constant,
-		light_speed: system.light_speed,
+		min_dist: system.min_dist,
 		quad_capacity: system.quad_capacity,
 		quad_maxdepth: system.quad_maxdepth,
 		quad_theta: system.quad_theta,
-		iterations: system.iterations
+		iterations: system.iterations,
+		paused: false
 	};
 
 	let updates = [];
@@ -42,28 +44,100 @@
 		100
 	);
 
-	const galaxy_system = () => {
-		system.bodies = [];
+	const orbits_settings = () => {
 		settings.renderer_options = {
 			preserveDrawingBuffer: true,
 			clearBeforeRender: false
 		};
+		settings.nb_objects = 40;
 		settings.shading = true;
-		settings.nb_objects = 2500;
+		settings.fading = true;
+		settings.dt = 0.1;
+		settings.bruteforce = true;
+		settings.g_constant = 9.2 * 10e-1;
+		settings.quad_capacity = 1;
+		settings.quad_maxdepth = 10;
+		settings.quad_theta = 0.5;
+		settings.iterations = 10;
+		settings.min_dist = 10e-1;
+	};
+
+	const orbits_system = () => {
+		system.bodies = [];
+		system.add(new Body(new Vec2(0, 0), new Vec2(0, 0), 10e5));
+
+		for (let i = 0; i < settings.nb_objects; ++i) {
+			const dist = 0.2 + (i + 1) / (settings.nb_objects / 0.45);
+			system.add(
+				new Body(new Vec2(dist * system.bounds.b.y, 0), new Vec2(0, 55 * settings.dt), 20)
+			);
+		}
+	};
+
+	const solar_settings = () => {
+		settings.renderer_options = {
+			preserveDrawingBuffer: true,
+			clearBeforeRender: false
+		};
+		settings.nb_objects = 20;
+		settings.shading = false;
+		settings.fading = false;
+		settings.dt = 0.1;
+		settings.bruteforce = true;
+		settings.g_constant = 9.2 * 10e-1;
+		settings.quad_capacity = 1;
+		settings.quad_maxdepth = 10;
+		settings.quad_theta = 0.5;
+		settings.iterations = 10;
+		settings.min_dist = 10e-1;
+	};
+
+	const solar_system = () => {
+		system.bodies = [];
+
+		const orthogonal = (A, pos, mass) => {
+			const G = settings.g_constant;
+			const M = A.mass;
+			const r = A.pos.clone().minus(pos).length();
+
+			const vel = Math.sqrt((G * M) / r);
+			return new Body(pos, new Vec2(0, vel * settings.dt), mass);
+		};
+
+		const sun = new Body(new Vec2(0, 0), new Vec2(0, 0), 10e5);
+		const earth = orthogonal(sun, new Vec2(0.5 * system.bounds.b.y, 0), 2 * 10e2);
+		const moon = orthogonal(earth, new Vec2(50 + 0.5 * system.bounds.b.y, 0), 11);
+
+		system.add(sun);
+		system.add(earth);
+		system.add(moon);
+	};
+
+	const galaxy_settings = () => {
+		settings.renderer_options = {
+			preserveDrawingBuffer: true,
+			clearBeforeRender: false
+		};
+		settings.nb_objects = 1500;
+		settings.shading = true;
 		settings.fading_color = 0xf9f9f9;
 		settings.fading = true;
-		settings.dt = 0.6;
-		settings.method = 'cluster';
-		settings.g_constant = 5.2 * 10e-1;
-		settings.light_speed = 2.6 * 10e1;
-		settings.quad_capacity = 5;
-		settings.quad_maxdepth = 20;
-		settings.quad_theta = 1.5;
-		settings.iterations = 3;
+		settings.dt = 0.1;
+		settings.bruteforce = false;
+		settings.g_constant = 1.1 * 10e1;
+		settings.quad_capacity = 10;
+		settings.quad_maxdepth = 15;
+		settings.quad_theta = 1.2;
+		settings.iterations = 1;
+		settings.min_dist = 10e3;
+	};
 
-		for (let i = 0; i < settings.nb_objects; i++) {
+	const galaxy_system = () => {
+		system.bodies = [];
+		system.add(new Body(new Vec2(0, 0), new Vec2(0, 0), 10e4));
+		for (let i = 0; i < settings.nb_objects - 1; i++) {
 			const angle = Random(-Math.PI, Math.PI - 0.01);
-			const dist = Random(0.001, 0.5); //Math.sqrt(Random(0, 0.5));
+			const dist = Random(0.02, 0.5);
 			const pos = new Vec2(dist * system.bounds.b.y, 0).rotateAround(angle, new Vec2(0, 0));
 			const vel = new Vec2(5 + 0.01 / (0.01 + dist ** 5), 0)
 				.rotateAround(angle, new Vec2(0, 0))
@@ -71,22 +145,41 @@
 			const mass = Math.exp(Random(1, 4));
 			system.add(new Body(pos, vel, mass));
 		}
-
-		return system;
 	};
 
 	const scenarios = {
-		galaxy: galaxy_system
+		galaxy: {
+			settings: galaxy_settings,
+			system: galaxy_system
+		},
+		solar: {
+			settings: solar_settings,
+			system: solar_system
+		},
+		orbits: {
+			settings: orbits_settings,
+			system: orbits_system
+		}
 	};
 
 	const setup_app = (app, pane) => {
 		circles.forEach((c) => c.destroy());
 		circles = [];
+		radius = [];
 
 		app.stage.removeChildren();
 		app.renderer.clear();
 
-		system = scenarios[settings.scenario]();
+		scenarios[settings.scenario].system();
+
+		system.dt = settings.dt;
+		system.bruteforce = settings.bruteforce;
+		system.g_constant = settings.g_constant;
+		system.quad_capacity = settings.quad_capacity;
+		system.quad_maxdepth = settings.quad_maxdepth;
+		system.quad_theta = settings.quad_theta;
+		system.iterations = settings.iterations;
+		system.min_dist = settings.min_dist;
 
 		pane.refresh();
 
@@ -94,9 +187,11 @@
 		const texture = PIXI.Texture.from(imageCircle);
 		for (let i = 0; i < system.bodies.length; ++i) {
 			const sprite = new PIXI.Sprite(texture);
+			sprite.anchor.set(0.5);
 			sprite.scale.set(0);
 			circles_container.addChild(sprite);
 			circles.push(sprite);
+			radius.push(0.01 + Math.cbrt(system.bodies[i].mass) * 0.01);
 		}
 
 		app.stage.addChild(circles_container);
@@ -116,33 +211,40 @@
 	const setup_pane = (app, pane) => {
 		pane.title = 'Barnes-hut simulation';
 
-		pane.addInput(settings, 'scenario', {
-			options: {
-				galaxy: 'galaxy'
-			},
-			label: 'scenario'
-		});
+		pane
+			.addInput(settings, 'scenario', {
+				options: {
+					galaxy: 'galaxy',
+					solar: 'solar',
+					orbits: 'orbits'
+				},
+				label: 'scenario'
+			})
+			.on('change', (e) => {
+				settings.scenario = e.value;
+				scenarios[settings.scenario].settings();
+				updates.push(() => setup_app(app, pane));
+			});
 
 		let folder_quadtree;
 		pane
-			.addInput(settings, 'method', {
+			.addInput(settings, 'bruteforce', {
 				options: {
-					cluster: 'cluster',
-					bruteforce: 'bruteforce',
-					aggregate: 'aggregate'
+					bruteforce: true,
+					clustering: false
 				},
 				label: 'method'
 			})
 			.on('change', (e) => {
-				updates.push(() => (system.method = e.value));
-				folder_quadtree.disabled = e.value != 'cluster';
+				updates.push(() => (system.bruteforce = e.value));
+				folder_quadtree.disabled = e.value;
 			});
 
 		pane
 			.addInput(settings, 'nb_objects', {
 				step: 10,
 				min: 0,
-				max: 10000,
+				max: 3000,
 				format: (n) => Math.floor(n),
 				label: 'count'
 			})
@@ -175,29 +277,24 @@
 			.addInput(settings, 'g_constant', {
 				step: 0.1,
 				min: 0.1,
-				max: 100,
+				max: 10e3,
 				label: 'G'
 			})
 			.on('change', (e) => {
 				updates.push(() => (system.g_constant = e.value));
 			});
 
-		pane
-			.addInput(settings, 'light_speed', {
-				step: 0.1,
-				min: 0.1,
-				max: 10e3,
-				label: 'light'
-			})
-			.on('change', (e) => {
-				updates.push(() => (system.light_speed = e.value));
-			});
-
 		pane.addButton({ title: 'Reset' }).on('click', () => {
 			updates.push(() => setup_app(app, pane));
 		});
 
+		pane.addButton({ title: 'Pause/Play' }).on('click', () => {
+			settings.paused = !settings.paused;
+		});
+
 		folder_quadtree = pane.addFolder({ title: 'Quadtree', expanded: false });
+
+		folder_quadtree.disabled = system.bruteforce;
 
 		folder_quadtree
 			.addInput(settings, 'quad_capacity', {
@@ -246,11 +343,6 @@
 		graphics_folder.addInput(settings, 'fading', {
 			label: 'fading'
 		});
-		graphics_folder.addInput(settings, 'fading_color', {
-			picker: 'inline',
-			view: 'color',
-			label: 'color'
-		});
 
 		const metrics = pane.addFolder({
 			title: 'Metrics',
@@ -274,6 +366,9 @@
 
 	const setup = (app, pane) => {
 		setup_pane(app, pane);
+
+		scenarios[settings.scenario].settings();
+
 		setup_app(app, pane);
 
 		document.addEventListener('mousemove', (e) => {
@@ -318,7 +413,8 @@
 		};
 
 		draw_quad(system.quad);
-		if (mouse) {
+
+		/*if (mouse) {
 			debug.lineStyle(1, 0x00ff00, 1);
 			debug.beginFill(0x00ff00, 0.3);
 			const f = system.quad.retrieve(mouse.clone().divide(resolution).minus(origin));
@@ -329,11 +425,11 @@
 				(f.bounds.b.y - f.bounds.a.y) * resolution
 			);
 			debug.endFill();
-		}
+		}*/
 	};
 
 	const draw_debug = () => {
-		if (settings.method == 'cluster') {
+		if (!settings.bruteforce) {
 			draw_debug_quadtree();
 		}
 	};
@@ -345,12 +441,13 @@
 		for (let i = 0; i < system.bodies.length; ++i) {
 			circles[i].x = (origin.x + system.bodies[i].pos.x) * resolution;
 			circles[i].y = (origin.y + system.bodies[i].pos.y) * resolution;
-			circles[i].scale.set(Math.log2(system.bodies[i].mass) * 0.01 * resolution);
+			circles[i].scale.set(radius[i] * resolution);
 
 			if (settings.shading) {
 				const pow = Math.floor(
-					system.bodies[i].vel.length_2() * system.dt + system.bodies[i].mass * 0.5 - 60
+					system.bodies[i].vel.length_2() * system.dt * 15 + system.bodies[i].mass * 0.5 - 70
 				);
+
 				const col = ColorToHex(galaxy_gradient[Math.max(Math.min(pow, 99), 0)]);
 				circles[i].tint = col;
 			} else {
@@ -359,18 +456,20 @@
 		}
 	};
 
-	const draw_effects = () => {};
-
 	const draw = (app, pane) => {
 		const s_sys = performance.now();
-		system.step(settings.dt);
+
+		if (!settings.paused) {
+			system.step(settings.dt);
+		}
+
 		settings.t_sys = performance.now() - s_sys;
 
 		const s_draw = performance.now();
 
 		if (!settings.fading) {
 			app.renderer.clear();
-			app.renderer.backgroundColor = 0x000000;
+			app.renderer.background.color = 0x000000;
 		}
 
 		draw_system();

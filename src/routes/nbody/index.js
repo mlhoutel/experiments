@@ -1,9 +1,10 @@
-import { Vec2, Rect2, SwapDelete, Quadtree2 } from '$utils/math.js';
+import { Vec2, Rect2, Quadtree2 } from '$utils/math.js';
 
 class Body {
 	constructor(pos, vel, mass) {
 		this.pos = pos;
 		this.vel = vel;
+		this.acc = new Vec2();
 		this.mass = mass;
 	}
 }
@@ -11,9 +12,8 @@ class Body {
 class System {
 	constructor() {
 		this.bodies = [];
-		this.min_dist = 3 * 100 ** 2;
-		this.g_constant = 6.7 * 10; // 6.7 * 10e-11
-		this.light_speed = 3 * 10e-3; // 2,998 * 10e+8
+		this.min_dist = 10e-1;
+		this.g_constant = 6.7 * 10e-1; // 6.7 * 10e-11
 		this.iterations = 5;
 		this.bounds = new Rect2(new Vec2(-10000, -10000), new Vec2(10000, 10000));
 		this.quad = new Quadtree2();
@@ -21,28 +21,21 @@ class System {
 		this.quad_maxdepth = 10;
 		this.quad_theta = 1;
 		this.dt = 0.1;
-		this.method = 'bruteforce';
+		this.bruteforce = true;
 	}
 
 	step() {
 		for (let k = 0; k < this.iterations; ++k) {
 			// Update positions
 			for (let i = 0; i < this.bodies.length; ++i) {
-				const length_2 = this.bodies[i].vel.length_2() * this.dt;
-				if (length_2 > this.light_speed) {
-					this.bodies[i].vel.times(this.light_speed / length_2);
-				}
-
-				const vel = this.bodies[i].vel.clone().times(this.dt);
+				const vel = this.bodies[i].vel.clone();
 				this.bodies[i].pos.plus(vel);
 			}
 
 			// Apply gravity
 			this.quad = new Quadtree2(this.bounds, this.quad_capacity, this.quad_maxdepth);
 
-			if (this.method == 'aggregate') {
-				this.aggregate_gravity();
-			} else if (this.method == 'bruteforce') {
+			if (this.bruteforce) {
 				this.bruteforce_gravity();
 			} else {
 				this.cluster_gravity();
@@ -88,7 +81,6 @@ class System {
 				for (let i = 0; i < 4; ++i) {
 					const quad_width = quad.childs[i].bounds.b.x - quad.childs[i].bounds.a.x;
 					const quad_dist = position.clone().minus(quad.childs[i].centroid).length();
-					// console.log({ position, child: quad.childs[i].centroid });
 
 					if (quad_width / quad_dist < this.quad_theta) {
 						clusters.push({ pos: quad.childs[i].centroid, mass: quad.childs[i].mass }); // long range
@@ -103,17 +95,11 @@ class System {
 
 		for (let i = 0; i < this.bodies.length; ++i) {
 			const clusters = compute_clusters(this.bodies[i].pos, this.quad);
-			const cluster_mass = clusters.reduce((acc, val) => acc + val.mass, 0);
-			const cluster_pos = clusters.reduce(
-				(acc, val) => acc.plus(val.pos.clone().times(val.mass / cluster_mass)),
-				new Vec2(0, 0)
-			);
-			const force = this.gravity(
-				this.bodies[i],
-				new Body(cluster_pos, new Vec2(0, 0), cluster_mass)
-			);
 
-			this.bodies[i].vel.plus(force.times(cluster_mass).times(this.dt * this.dt));
+			for (let j = 0; j < clusters.length; ++j) {
+				const force = this.gravity(this.bodies[i], clusters[j]).times(this.dt * this.dt);
+				this.bodies[i].vel.plus(force.times(clusters[j].mass));
+			}
 		}
 	}
 
@@ -121,26 +107,10 @@ class System {
 		for (let i = 0; i < this.bodies.length - 1; ++i) {
 			for (let j = i + 1; j < this.bodies.length; ++j) {
 				const force = this.gravity(this.bodies[i], this.bodies[j]).times(this.dt * this.dt);
+
 				this.bodies[i].vel.plus(force.clone().times(this.bodies[j].mass));
 				this.bodies[j].vel.minus(force.times(this.bodies[i].mass));
 			}
-		}
-	}
-
-	aggregate_gravity() {
-		const aggregate_mass = this.bodies.reduce((acc, cur) => acc + cur.mass, 0);
-		const aggregate_pos = this.bodies.reduce(
-			(acc, cur) => acc.plus(cur.pos.clone().times(cur.mass / aggregate_mass)),
-			new Vec2(0, 0)
-		);
-
-		for (let i = 0; i < this.bodies.length; ++i) {
-			const force = this.gravity(
-				this.bodies[i],
-				new Body(aggregate_pos, new Vec2(0, 0), aggregate_mass)
-			);
-
-			this.bodies[i].vel.plus(force.times(aggregate_mass).times(this.dt * this.dt));
 		}
 	}
 
@@ -150,7 +120,7 @@ class System {
 
 		let force = this.g_constant / dist_2;
 
-		return diff.clone().divide(Math.sqrt(dist_2)).times(force);
+		return diff.divide(Math.sqrt(dist_2)).times(force);
 	}
 
 	add(body) {
