@@ -120,6 +120,16 @@ class Vec2 {
 		return this;
 	}
 
+	static distance_2(a, b) {
+		const dist_x = b.x - a.x;
+		const dist_y = b.y - a.y;
+		return dist_x * dist_x + dist_y * dist_y;
+	}
+
+	static distance(a, b) {
+		return Math.sqrt(Vec2.distance_2(a, b));
+	}
+
 	/**
 	 * Calculates the squared length (magnitude) of this Vector.
 	 * @returns {number} - The squared length of the Vector.
@@ -174,7 +184,7 @@ class Rect2 {
 }
 
 class Quadtree2 {
-	constructor(bounds, capacity, max_depth = 5) {
+	constructor(bounds = new Rect2(new Vec2(0, 0), new Vec2(0, 0)), capacity = 10, max_depth = 5) {
 		this.bounds = bounds;
 		this.capacity = capacity;
 		this.childs = undefined;

@@ -1,42 +1,50 @@
-import { Vec2, Rect2, SwapDelete, Quadtree2 } from '$utils/math.js';
+import { Vec2, Rect2, Quadtree2 } from '$utils/math.js';
 
 class Body {
 	constructor(pos, vel, mass) {
 		this.pos = pos;
 		this.vel = vel;
+		this.acc = new Vec2();
 		this.mass = mass;
-	}
-
-	step() {
-		this.pos.plus(this.vel);
 	}
 }
 
 class System {
 	constructor() {
 		this.bodies = [];
-		this.min_dist = 10000;
-		this.gravity_constant = 6.7 * 10e-1; // 6.7 * 10e-11
-		this.light_speed = 2.998 * 10e8; // 2,998 * 10e+8
-		this.number_iterations = 1;
+		this.min_dist = 10e-1;
+		this.g_constant = 6.7 * 10e-1; // 6.7 * 10e-11
+		this.iterations = 5;
 		this.bounds = new Rect2(new Vec2(-10000, -10000), new Vec2(10000, 10000));
-		this.quad = new Quadtree2(this.bounds, 10);
+		this.quad = new Quadtree2();
+		this.quad_capacity = 20;
+		this.quad_maxdepth = 10;
+		this.quad_theta = 1;
+		this.dt = 0.1;
+		this.bruteforce = true;
 	}
 
 	step() {
-		for (let k = 0; k < this.number_iterations; ++k) {
+		for (let k = 0; k < this.iterations; ++k) {
 			// Update positions
 			for (let i = 0; i < this.bodies.length; ++i) {
-				this.bodies[i].step();
+				const vel = this.bodies[i].vel.clone();
+				this.bodies[i].pos.plus(vel);
 			}
 
-			this.cluster_gravity();
+			// Apply gravity
+			this.quad = new Quadtree2(this.bounds, this.quad_capacity, this.quad_maxdepth);
+
+			if (this.bruteforce) {
+				this.bruteforce_gravity();
+			} else {
+				this.cluster_gravity();
+			}
 		}
 	}
 
 	cluster_gravity() {
 		// Compute quadtree:
-		this.quad = new Quadtree2(this.bounds, 1, 10);
 		for (let i = 0; i < this.bodies.length; ++i) {
 			this.quad.insert(this.bodies[i].pos, this.bodies[i].mass);
 		}
@@ -66,16 +74,20 @@ class System {
 
 		const compute_clusters = (position, quad, clusters = []) => {
 			if (!quad.childs?.length) {
-				clusters.push(...quad.values.map(([pos, mass]) => ({ pos, mass })));
+				for (let i = 0; i < quad.values.length; ++i) {
+					clusters.push({ pos: quad.values[i][0], mass: quad.values[i][1] });
+				}
 			} else {
-				const inside = quad.quadrant(position);
-				const others = [0, 1, 2, 3].filter((v) => v != inside);
+				for (let i = 0; i < 4; ++i) {
+					const quad_width = quad.childs[i].bounds.b.x - quad.childs[i].bounds.a.x;
+					const quad_dist = position.clone().minus(quad.childs[i].centroid).length();
 
-				clusters.push(
-					...others.map((i) => ({ pos: quad.childs[i].centroid, mass: quad.childs[i].mass }))
-				);
-
-				compute_clusters(quad, quad.childs[inside], clusters);
+					if (quad_width / quad_dist < this.quad_theta) {
+						clusters.push({ pos: quad.childs[i].centroid, mass: quad.childs[i].mass }); // long range
+					} else {
+						compute_clusters(position, quad.childs[i], clusters); // short range
+					}
+				}
 			}
 
 			return clusters;
@@ -83,27 +95,21 @@ class System {
 
 		for (let i = 0; i < this.bodies.length; ++i) {
 			const clusters = compute_clusters(this.bodies[i].pos, this.quad);
-			const cluster_mass = clusters.reduce((acc, val) => acc + val.mass, 0);
-			const cluster_pos = clusters.reduce(
-				(acc, val) => acc.plus(val.pos.times(val.mass / cluster_mass)),
-				new Vec2(0, 0)
-			);
 
-			const force = this.gravity(
-				this.bodies[i],
-				new Body(cluster_pos, new Vec2(0, 0), cluster_mass)
-			);
-
-			this.bodies[i].vel.plus(force.times(cluster_mass));
+			for (let j = 0; j < clusters.length; ++j) {
+				const force = this.gravity(this.bodies[i], clusters[j]).times(this.dt * this.dt);
+				this.bodies[i].vel.plus(force.times(clusters[j].mass));
+			}
 		}
 	}
 
 	bruteforce_gravity() {
 		for (let i = 0; i < this.bodies.length - 1; ++i) {
 			for (let j = i + 1; j < this.bodies.length; ++j) {
-				const force = this.gravity(this.bodies[i], this.bodies[j]);
-				bodyA.vel.plus(force.times(bodyB.mass));
-				bodyB.vel.minus(force.times(bodyA.mass));
+				const force = this.gravity(this.bodies[i], this.bodies[j]).times(this.dt * this.dt);
+
+				this.bodies[i].vel.plus(force.clone().times(this.bodies[j].mass));
+				this.bodies[j].vel.minus(force.times(this.bodies[i].mass));
 			}
 		}
 	}
@@ -112,13 +118,9 @@ class System {
 		const diff = bodyB.pos.clone().minus(bodyA.pos);
 		const dist_2 = diff.length_2() + this.min_dist;
 
-		let force = this.gravity_constant / dist_2;
+		let force = this.g_constant / dist_2;
 
-		if (force > this.light_speed) {
-			force = this.light_speed;
-		}
-
-		return diff.clone().divide(Math.sqrt(dist_2)).times(force);
+		return diff.divide(Math.sqrt(dist_2)).times(force);
 	}
 
 	add(body) {
